@@ -1,0 +1,73 @@
+# Prometheus Configuration for Taifabase Development Environment
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: 'development'
+    project: 'taifabase'
+
+# Rules and alerts
+rule_files:
+  - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  # PostgreSQL database metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    params:
+      collect[]:
+        - 'pg_stat_database'
+        - 'pg_stat_user_tables'
+        - 'pg_stat_statements'
+        - 'pg_locks'
+        - 'pg_stat_replication'
+
+  # Redis metrics (if redis_exporter is added later)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis_exporter:9121']
+    scrape_interval: 15s
+    # Currently disabled as redis_exporter is not in docker-compose
+    # Enable when redis monitoring is needed
+
+  # Nginx metrics (if nginx-prometheus-exporter is added)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx_exporter:9113']
+    scrape_interval: 30s
+    # Currently disabled as nginx_exporter is not in docker-compose
+
+  # Node exporter for system metrics (can be added later)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node_exporter:9100']
+    scrape_interval: 30s
+    # Currently disabled as node_exporter is not in docker-compose
+
+  # Application metrics (for future backend services)
+  - job_name: 'taifabase-api'
+    static_configs:
+      - targets: ['api:8000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    # Currently disabled as API service is not yet implemented
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+          # Currently disabled as alertmanager is not in docker-compose
+
+# Storage configuration is managed via command line flags in docker-compose.yml

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(psql:*)",
+      "Bash(PGPASSWORD=acme_password psql -h localhost -p 5433 -U acme_user -d taifabase_dev -c \"SELECT switch_to_tenant(''acme-corp''); SELECT COUNT(*) as visible_records FROM tenant.sample_data;\")",
+      "Bash(PGPASSWORD=techstart_password psql -h localhost -p 5433 -U techstart_user -d taifabase_dev -c \"SELECT switch_to_tenant(''techstart-inc''); SELECT COUNT(*) as visible_records FROM tenant.sample_data;\")",
+      "Bash(PGPASSWORD=acme_password psql -h localhost -p 5433 -U acme_user -d taifabase_dev -c \"SELECT switch_to_tenant(''techstart-inc''); SELECT COUNT(*) as visible_records FROM tenant.sample_data;\")",
+      "Bash(chmod:*)",
+      "Bash(docker:*)",
+      "Bash(docker compose:*)",
+      "Bash(./scripts/start-dev-environment.sh:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

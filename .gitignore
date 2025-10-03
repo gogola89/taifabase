@@ -1,0 +1,116 @@
+# Taifabase .gitignore
+
+# Environment variables and secrets
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+
+# Database data and logs
+database/data/
+database/logs/
+*.log
+*.sql.backup
+
+# Docker volumes and temp files
+.docker/
+docker-compose.override.yml
+
+# Node.js (for future frontend work)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Go (for future backend services)
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+vendor/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+go.sum
+go.mod.backup
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# OS generated files
+.DS_Store?
+ehthumbs.db
+Icon?
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Monitoring and metrics data
+monitoring/data/
+grafana/data/
+prometheus/data/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# SSL certificates and keys
+*.key
+*.crt
+*.pem
+*.p12
+ssl/
+
+# Local development overrides
+docker-compose.local.yml
+local-config/
+
+# Documentation build outputs
+docs/_build/
+docs/site/
+
+# Test outputs and coverage
+coverage/
+test-results/
+*.coverage
+htmlcov/
+
+# Performance test results
+performance-results/
+load-test-reports/
+
+# Database migration temp files
+migrations/temp/
+schema-backup/

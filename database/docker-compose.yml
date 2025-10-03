@@ -1,0 +1,201 @@
+services:
+  # PostgreSQL Database - Primary database service
+  postgres:
+    image: postgres:15.8
+    container_name: taifabase_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-taifabase_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-taifabase_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taifabase_dev_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./scripts:/docker-entrypoint-initdb.d
+      - postgres_logs:/var/log/postgresql
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taifabase_user} -d ${POSTGRES_DB:-taifabase_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Redis - Caching and session storage
+  redis:
+    image: redis:7.2-alpine
+    container_name: taifabase_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD:-taifabase_redis_password} --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-taifabase_redis_password}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # Adminer - Database administration tool
+  adminer:
+    image: adminer:4.8.1
+    container_name: taifabase_adminer
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: pepa-linha-dark
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # pgAdmin - Advanced PostgreSQL administration
+  pgadmin:
+    image: dpage/pgadmin4:7.8
+    container_name: taifabase_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@taifabase.dev}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-taifabase_admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "${PGADMIN_PORT:-8081}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./config/pgadmin_servers.json:/pgadmin4/servers.json
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Nginx - Development reverse proxy and static file serving
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: taifabase_nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf
+      - ./config/nginx/:/etc/nginx/conf.d/
+      - nginx_logs:/var/log/nginx
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.47.2
+    container_name: taifabase_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: taifabase_grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-taifabase_grafana}
+      GF_INSTALL_PLUGINS: grafana-clock-panel,grafana-simple-json-datasource
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/:/etc/grafana/provisioning/
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # PostgreSQL Exporter - Database metrics for Prometheus
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: taifabase_postgres_exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-taifabase_user}:${POSTGRES_PASSWORD:-taifabase_dev_password}@postgres:5432/${POSTGRES_DB:-taifabase_dev}?sslmode=disable"
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Development tools container
+  devtools:
+    image: alpine:3.18
+    container_name: taifabase_devtools
+    command: tail -f /dev/null
+    volumes:
+      - ./:/workspace
+      - devtools_home:/root
+    working_dir: /workspace
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  postgres_logs:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  devtools_home:
+    driver: local
+
+networks:
+  taifabase_network:
+    driver: bridge

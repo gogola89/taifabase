@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Taifabase Development",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "taifabase_dev",
+      "Username": "taifabase_user",
+      "PassFile": "/tmp/pgpassfile",
+      "SSLMode": "prefer",
+      "Comment": "Taifabase PostgreSQL Development Database"
+    }
+  }
+}
