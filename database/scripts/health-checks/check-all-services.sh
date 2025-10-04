@@ -74,24 +74,56 @@ check_service_connectivity() {
 
 # Function to check PostgreSQL specifically
 check_postgres() {
-    echo -n "Testing PostgreSQL connection... "
-    
+    echo -n "Testing PostgreSQL direct connection (port 5434)... "
+
     if docker compose exec -T postgres pg_isready -U taifabase_user -d taifabase_dev >/dev/null 2>&1; then
         echo -e "${GREEN}✓ PostgreSQL ready${NC}"
-        
+
         # Check if database has expected tables
         echo -n "Verifying database schema... "
         table_count=$(docker compose exec -T postgres psql -U taifabase_user -d taifabase_dev -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema IN ('core', 'tenant');" | tr -d ' ')
-        
+
         if [ "$table_count" -ge 3 ]; then
             echo -e "${GREEN}✓ Schema verified ($table_count tables)${NC}"
         else
             echo -e "${YELLOW}⚠ Schema incomplete ($table_count tables)${NC}"
         fi
-        
+
         return 0
     else
         echo -e "${RED}✗ PostgreSQL not ready${NC}"
+        return 1
+    fi
+}
+
+# Function to check PgBouncer
+check_pgbouncer() {
+    echo -n "Testing PgBouncer connection pooling... "
+
+    # Check if PgBouncer is responding
+    if docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ PgBouncer operational${NC}"
+
+        # Get pool statistics
+        echo -n "PgBouncer pool status... "
+        pool_info=$(docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" | grep -v "^$" | head -1)
+
+        if [ -n "$pool_info" ]; then
+            echo -e "${GREEN}✓ Pools active${NC}"
+
+            # Get detailed stats
+            echo "  Pool details:"
+            docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" | grep taifabase_dev | awk '{print "    Database: "$1", Client Connections: "$3", Server Connections: "$4", Server Active: "$5}'
+
+            # Get configuration
+            echo -n "  PgBouncer pool mode... "
+            pool_mode=$(docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW CONFIG;" | grep pool_mode | awk '{print $3}')
+            echo -e "${BLUE}$pool_mode${NC}"
+        fi
+
+        return 0
+    else
+        echo -e "${RED}✗ PgBouncer not ready${NC}"
         return 1
     fi
 }
@@ -115,31 +147,33 @@ main() {
     
     echo "1. Docker Compose Services Health:"
     echo "--------------------------------"
-    
-    # Check core services
-    for service in postgres redis; do
+
+    # Check core services (Day 2: Added PgBouncer)
+    for service in postgres pgbouncer redis; do
         if ! check_service_health "$service"; then
             overall_health=1
         fi
     done
-    
+
     echo ""
     echo "2. Service Connectivity Tests:"
     echo "-----------------------------"
-    
-    # Check service connectivity
-    check_service_connectivity "PostgreSQL" 5433
+
+    # Check service connectivity (Day 2: Updated ports)
+    check_service_connectivity "PostgreSQL (Direct)" 5434
+    check_service_connectivity "PgBouncer (Pooled)" 5433
     check_service_connectivity "Redis" 6379
     check_service_connectivity "Adminer" 8080
     check_service_connectivity "pgAdmin" 8081
     check_service_connectivity "Grafana" 3000
     check_service_connectivity "Prometheus" 9090
-    
+
     echo ""
     echo "3. Database-Specific Checks:"
     echo "---------------------------"
-    
+
     check_postgres
+    check_pgbouncer
     check_redis
     
     echo ""
@@ -165,14 +199,20 @@ main() {
     if [ $overall_health -eq 0 ]; then
         echo -e "${GREEN}✓ All critical services are healthy!${NC}"
         echo ""
-        echo "Service URLs:"
-        echo "- Database (PostgreSQL): localhost:5433"
+        echo "Service URLs (Day 2: Updated with PgBouncer):"
+        echo "- Database (PgBouncer - Pooled): localhost:5433 [RECOMMENDED]"
+        echo "- Database (PostgreSQL - Direct): localhost:5434 [For admin/debugging]"
         echo "- Cache (Redis): localhost:6379"
         echo "- DB Admin (Adminer): http://localhost:8080"
         echo "- DB Admin (pgAdmin): http://localhost:8081"
         echo "- Monitoring (Grafana): http://localhost:3000"
         echo "- Metrics (Prometheus): http://localhost:9090"
         echo "- Reverse Proxy: http://localhost:80"
+        echo ""
+        echo "Connection Tips:"
+        echo "  • Use PgBouncer (port 5433) for all application connections"
+        echo "  • Transaction pooling mode preserves RLS session state"
+        echo "  • Direct PostgreSQL (port 5434) for maintenance only"
         return 0
     else
         echo -e "${RED}✗ Some services are not healthy${NC}"
