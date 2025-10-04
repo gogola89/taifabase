@@ -1,5 +1,6 @@
 services:
   # PostgreSQL Database - Primary database service with TLS encryption
+  # Day 2: Port changed to 5434 to allow PgBouncer on 5433
   postgres:
     image: postgres:15.8
     container_name: taifabase_postgres
@@ -9,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-taifabase_dev_password}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      - "${POSTGRES_INTERNAL_PORT:-5434}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./config/postgresql.conf:/etc/postgresql/postgresql.conf
@@ -34,6 +35,43 @@ services:
           memory: 2G
         reservations:
           memory: 512M
+
+  # PgBouncer - Connection pooling for PostgreSQL
+  # Day 2: Transaction pooling mode for RLS compatibility
+  pgbouncer:
+    image: pgbouncer/pgbouncer:1.21.0
+    container_name: taifabase_pgbouncer
+    ports:
+      - "${PGBOUNCER_PORT:-5433}:5432"
+    volumes:
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    environment:
+      # PgBouncer will read configuration from pgbouncer.ini
+      # These env vars provide defaults but ini file takes precedence
+      DATABASES_HOST: postgres
+      DATABASES_PORT: 5432
+      DATABASES_USER: ${POSTGRES_USER:-taifabase_user}
+      DATABASES_PASSWORD: ${POSTGRES_PASSWORD:-taifabase_dev_password}
+      DATABASES_DBNAME: ${POSTGRES_DB:-taifabase_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -p 5432 -U ${POSTGRES_USER:-taifabase_user} -d pgbouncer -c 'SHOW POOLS' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taifabase_network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
 
   # Redis - Caching and session storage
   redis:
@@ -61,19 +99,20 @@ services:
           memory: 128M
 
   # Adminer - Database administration tool
+  # Day 2: Connect through PgBouncer for connection pooling
   adminer:
     image: adminer:4.8.1
     container_name: taifabase_adminer
     ports:
       - "${ADMINER_PORT:-8080}:8080"
     environment:
-      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DEFAULT_SERVER: pgbouncer
       ADMINER_DESIGN: pepa-linha-dark
     networks:
       - taifabase_network
     restart: unless-stopped
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
 
   # pgAdmin - Advanced PostgreSQL administration
