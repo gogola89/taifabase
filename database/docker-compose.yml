@@ -116,6 +116,7 @@ services:
         condition: service_healthy
 
   # pgAdmin - Advanced PostgreSQL administration
+  # Day 2: Connect through PgBouncer for connection pooling
   pgadmin:
     image: dpage/pgadmin4:7.8
     container_name: taifabase_pgadmin
@@ -132,10 +133,11 @@ services:
       - taifabase_network
     restart: unless-stopped
     depends_on:
-      postgres:
+      pgbouncer:
         condition: service_healthy
 
   # Nginx - Development reverse proxy and static file serving
+  # Day 2: Updated to depend on PgBouncer
   nginx:
     image: nginx:1.25-alpine
     container_name: taifabase_nginx
@@ -150,7 +152,7 @@ services:
       - taifabase_network
     restart: unless-stopped
     depends_on:
-      - postgres
+      - pgbouncer
       - redis
 
   # Prometheus - Metrics collection
