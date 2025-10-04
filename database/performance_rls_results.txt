@@ -258,3 +258,38 @@ Timing is off.
 
 === RLS PERFORMANCE TESTING COMPLETED ===
 Compare these results with baseline metrics to measure RLS impact
+
+==========================================
+DAY 2 OPTIMIZATION RESULTS - 2025-10-04
+==========================================
+Optimizations Applied:
+1. Marked get_current_tenant() as STABLE for query-level caching
+2. Marked validate_tenant_access() as STABLE 
+3. Added RLS-optimized composite indexes (tenant_id first)
+
+PERFORMANCE COMPARISON:
+=======================
+
+COUNT Query Performance:
+- BEFORE: 234.856 ms (84x slower than baseline)
+- AFTER:  3.669 ms (only 1.3x slower than baseline!)
+- IMPROVEMENT: 64x faster (98.4% reduction in execution time)
+
+Aggregation Performance:
+- BEFORE: 255.357 ms (44x slower)
+- AFTER:  5.826 ms (only 1x compared to baseline)
+- IMPROVEMENT: 44x faster (97.7% reduction in execution time)
+
+Buffer I/O Impact:
+- BEFORE: 20,016 buffer hits for COUNT
+- AFTER:  640 buffer hits for COUNT
+- IMPROVEMENT: 31x reduction in I/O operations
+
+KEY ACHIEVEMENT: COUNT overhead reduced from 84x to <2x
+TARGET MET: Performance goal of <10x overhead EXCEEDED
+
+The STABLE function marking allows PostgreSQL to cache function results
+within a single query execution, eliminating redundant calls per row.
+Combined with composite indexes (tenant_id first), query plans now use
+efficient bitmap heap scans instead of full table scans.
+
