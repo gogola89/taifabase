@@ -33,7 +33,7 @@ check_service_health() {
 
     while [ $attempt -le $max_attempts ]; do
         # Get service health status
-        health_status=$(docker compose ps --format json | jq -r ".[] | select(.Service == \"$service_name\") | .Health")
+        health_status=$(docker compose ps --format json | jq -r "select(.Service == \"$service_name\") | .Health")
         
         if [ "$health_status" = "healthy" ]; then
             echo -e "${GREEN}✓ Healthy${NC}"
@@ -101,23 +101,23 @@ check_pgbouncer() {
     echo -n "Testing PgBouncer connection pooling... "
 
     # Check if PgBouncer is responding
-    if docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" >/dev/null 2>&1; then
+    if docker compose exec -T pgbouncer sh -c 'PGPASSWORD=taifabase_dev_password psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;"' >/dev/null 2>&1; then
         echo -e "${GREEN}✓ PgBouncer operational${NC}"
 
         # Get pool statistics
         echo -n "PgBouncer pool status... "
-        pool_info=$(docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" | grep -v "^$" | head -1)
+        pool_info=$(docker compose exec -T pgbouncer sh -c 'PGPASSWORD=taifabase_dev_password psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;"' | grep -v "^$" | head -1)
 
         if [ -n "$pool_info" ]; then
             echo -e "${GREEN}✓ Pools active${NC}"
 
             # Get detailed stats
             echo "  Pool details:"
-            docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;" | grep taifabase_dev | awk '{print "    Database: "$1", Client Connections: "$3", Server Connections: "$4", Server Active: "$5}'
+            docker compose exec -T pgbouncer sh -c 'PGPASSWORD=taifabase_dev_password psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW POOLS;"' | grep taifabase_dev | awk '{print "    Database: "$1", Client Connections: "$3", Server Connections: "$4", Server Active: "$5}'
 
             # Get configuration
             echo -n "  PgBouncer pool mode... "
-            pool_mode=$(docker compose exec -T pgbouncer psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW CONFIG;" | grep pool_mode | awk '{print $3}')
+            pool_mode=$(docker compose exec -T pgbouncer sh -c 'PGPASSWORD=taifabase_dev_password psql -h localhost -p 5432 -U taifabase_user -d pgbouncer -t -c "SHOW CONFIG;"' | grep pool_mode | awk '{print $3}')
             echo -e "${BLUE}$pool_mode${NC}"
         fi
 
@@ -182,7 +182,7 @@ main() {
     
     # Measure startup time from last restart
     echo -n "Checking overall startup performance... "
-    start_time=$(docker compose ps --format json | jq -r '.[0].RunningFor')
+    start_time=$(docker compose ps --format json | head -1 | jq -r '.RunningFor')
     echo -e "${BLUE}Services running for: $start_time${NC}"
     
     echo ""
