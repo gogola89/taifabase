@@ -9,6 +9,6 @@
 
 ; Development user credentials
 ; Username: taifabase_user
-; Password: taifabase_dev_password
-; MD5 hash calculated as: md5(taifabase_dev_passwordtaifabase_user)
-"taifabase_user" "md553118eb134a4b02d4c1f87f008aff9e5"
+; Password: Plain text for SCRAM-SHA-256 authentication
+; Day 2 Fix: Plain text password for SCRAM support (PgBouncer will handle SCRAM negotiation)
+"taifabase_user" "taifabase_dev_password"

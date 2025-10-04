@@ -17,8 +17,11 @@ services:
       - ./scripts:/docker-entrypoint-initdb.d
       - postgres_logs:/var/log/postgresql
       # Day 2 Security Hardening: TLS/SSL certificate mounting
-      - ./config/ssl/server.crt:/etc/ssl/certs/server.crt:ro
-      - ./config/ssl/server.key:/etc/ssl/private/server.key:ro
+      - ./config/ssl/server.crt:/etc/ssl/certs/server.crt
+      - ./config/ssl/server.key:/etc/ssl/private/server.key
+      # Custom entrypoint to fix SSL permissions
+      - ./scripts/postgres-entrypoint-wrapper.sh:/usr/local/bin/postgres-entrypoint-wrapper.sh
+    entrypoint: ["/usr/local/bin/postgres-entrypoint-wrapper.sh"]
     command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-taifabase_user} -d ${POSTGRES_DB:-taifabase_dev}"]
@@ -55,7 +58,7 @@ services:
       DATABASES_PASSWORD: ${POSTGRES_PASSWORD:-taifabase_dev_password}
       DATABASES_DBNAME: ${POSTGRES_DB:-taifabase_dev}
     healthcheck:
-      test: ["CMD-SHELL", "psql -h localhost -p 5432 -U ${POSTGRES_USER:-taifabase_user} -d pgbouncer -c 'SHOW POOLS' || exit 1"]
+      test: ["CMD-SHELL", "PGPASSWORD=${POSTGRES_PASSWORD:-taifabase_dev_password} psql -h localhost -p 5432 -U ${POSTGRES_USER:-taifabase_user} -d pgbouncer -c 'SHOW POOLS' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
