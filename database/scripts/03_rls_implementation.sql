@@ -248,6 +248,127 @@ CREATE INDEX IF NOT EXISTS idx_sample_data_tenant_value
 ON tenant.sample_data(tenant_id, value);
 
 -- ==================================================
+-- STEP 9: RLS Template for Future Tenant Tables (Day 2 - US-103)
+-- ==================================================
+
+-- This section provides a template for extending RLS to new tenant tables
+-- Apply this pattern to ANY new table in the tenant schema
+
+/*
+TEMPLATE FOR ADDING RLS TO NEW TENANT TABLES:
+----------------------------------------------
+
+1. Enable RLS on the table:
+   ALTER TABLE tenant.{table_name} ENABLE ROW LEVEL SECURITY;
+   ALTER TABLE tenant.{table_name} FORCE ROW LEVEL SECURITY;
+
+2. Create tenant isolation policy:
+   CREATE POLICY tenant_isolation_policy ON tenant.{table_name}
+       FOR ALL
+       TO tenant_user
+       USING (
+           tenant_id = get_current_tenant()
+           AND get_current_tenant() IS NOT NULL
+           AND validate_tenant_access(get_current_tenant())
+       );
+
+3. Create admin access policy:
+   CREATE POLICY admin_full_access_policy ON tenant.{table_name}
+       FOR ALL
+       TO admin_user
+       USING (true);
+
+4. Create readonly policy:
+   CREATE POLICY readonly_access_policy ON tenant.{table_name}
+       FOR SELECT
+       TO readonly_user
+       USING (true);
+
+5. Create RLS-optimized indexes (tenant_id FIRST):
+   CREATE INDEX idx_{table_name}_tenant_id ON tenant.{table_name}(tenant_id);
+   CREATE INDEX idx_{table_name}_tenant_{common_column}
+   ON tenant.{table_name}(tenant_id, {common_column});
+
+6. Test the RLS policies:
+   -- Switch to a tenant context
+   SELECT switch_to_tenant('acme-corp');
+
+   -- Verify only tenant data is visible
+   SELECT COUNT(*) FROM tenant.{table_name};
+
+   -- Check query plan uses indexes
+   EXPLAIN ANALYZE SELECT * FROM tenant.{table_name} LIMIT 10;
+*/
+
+-- Example: If we add a "projects" table to tenant schema:
+-- (Commented out - uncomment and modify when adding new tenant tables)
+/*
+ALTER TABLE tenant.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant.projects FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation_policy ON tenant.projects
+    FOR ALL TO tenant_user
+    USING (
+        tenant_id = get_current_tenant()
+        AND get_current_tenant() IS NOT NULL
+        AND validate_tenant_access(get_current_tenant())
+    );
+
+CREATE POLICY admin_full_access_policy ON tenant.projects
+    FOR ALL TO admin_user USING (true);
+
+CREATE POLICY readonly_access_policy ON tenant.projects
+    FOR SELECT TO readonly_user USING (true);
+
+CREATE INDEX idx_projects_tenant_id ON tenant.projects(tenant_id);
+CREATE INDEX idx_projects_tenant_status ON tenant.projects(tenant_id, status);
+CREATE INDEX idx_projects_tenant_created ON tenant.projects(tenant_id, created_at DESC);
+*/
+
+-- ==================================================
+-- STEP 10: Extend RLS to core.users Table (Day 2 - US-103)
+-- ==================================================
+
+-- The core.users table contains tenant_id and should have RLS for defense-in-depth
+-- This ensures users can only see/modify users within their own tenant
+
+-- Enable RLS on users table
+ALTER TABLE core.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE core.users FORCE ROW LEVEL SECURITY;
+
+-- Policy 1: Tenant isolation for users table
+CREATE POLICY tenant_isolation_policy ON core.users
+    FOR ALL
+    TO tenant_user
+    USING (
+        tenant_id = get_current_tenant()
+        AND get_current_tenant() IS NOT NULL
+        AND validate_tenant_access(get_current_tenant())
+    );
+
+-- Policy 2: Admin full access to all users
+CREATE POLICY admin_full_access_policy ON core.users
+    FOR ALL
+    TO admin_user
+    USING (true);
+
+-- Policy 3: Readonly access to all users
+CREATE POLICY readonly_access_policy ON core.users
+    FOR SELECT
+    TO readonly_user
+    USING (true);
+
+-- Create RLS-optimized composite indexes for users table
+CREATE INDEX IF NOT EXISTS idx_users_tenant_email
+ON core.users(tenant_id, email);
+
+CREATE INDEX IF NOT EXISTS idx_users_tenant_username
+ON core.users(tenant_id, username);
+
+CREATE INDEX IF NOT EXISTS idx_users_tenant_status
+ON core.users(tenant_id, status);
+
+-- ==================================================
 -- VERIFICATION QUERIES
 -- ==================================================
 
