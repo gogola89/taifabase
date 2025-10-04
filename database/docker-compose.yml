@@ -39,7 +39,7 @@ services:
   # PgBouncer - Connection pooling for PostgreSQL
   # Day 2: Transaction pooling mode for RLS compatibility
   pgbouncer:
-    image: pgbouncer/pgbouncer:1.21.0
+    image: edoburu/pgbouncer:v1.24.1-p1
     container_name: taifabase_pgbouncer
     ports:
       - "${PGBOUNCER_PORT:-5433}:5432"
