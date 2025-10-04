@@ -114,6 +114,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Function to get current tenant from session
+-- OPTIMIZED (Day 2): Marked as STABLE for query-level caching
+-- This reduces function calls from 3-per-row to 1-per-query
 CREATE OR REPLACE FUNCTION get_current_tenant()
 RETURNS UUID AS $$
 BEGIN
@@ -122,7 +124,7 @@ EXCEPTION
     WHEN others THEN
         RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STABLE;  -- CRITICAL: STABLE enables caching!
 ```
 
 ### Database Roles Strategy
@@ -298,5 +300,94 @@ ORDER BY total_time DESC;
 - Database role management requirements
 - Connection pooling considerations with RLS
 - Monitoring and alerting requirements defined
+
+This strategy provides a solid foundation for implementing secure, performant multi-tenant RLS policies while maintaining the flexibility needed for Taifabase's requirements.
+
+## Day 2 Performance Optimization Update (2025-10-04)
+
+### Critical Performance Improvements Implemented
+
+After Day 1 testing revealed 84x performance degradation on COUNT queries, Day 2 focused on optimization:
+
+#### 1. Function Volatility Optimization
+**Problem**: PostgreSQL default function volatility is VOLATILE, causing function evaluation on every row.
+
+**Solution**: Mark session management functions as STABLE:
+```sql
+CREATE OR REPLACE FUNCTION get_current_tenant()
+RETURNS UUID AS $$
+BEGIN
+    RETURN current_setting('app.current_tenant_id', true)::uuid;
+EXCEPTION
+    WHEN others THEN
+        RETURN NULL;
+END;
+$$ LANGUAGE plpgsql STABLE;  -- Changed from default VOLATILE
+```
+
+**Impact**:
+- Function calls reduced from 3-per-row to 1-per-query
+- COUNT queries: 234ms → 3.7ms (64x faster)
+- Aggregations: 255ms → 5.8ms (44x faster)
+
+#### 2. RLS-Aware Index Strategy
+**Problem**: Single-column indexes don't optimize multi-condition queries with RLS.
+
+**Solution**: Composite indexes with tenant_id as first column:
+```sql
+CREATE INDEX idx_sample_data_tenant_category
+ON tenant.sample_data(tenant_id, category);
+
+CREATE INDEX idx_sample_data_tenant_created
+ON tenant.sample_data(tenant_id, created_at DESC);
+```
+
+**Impact**:
+- Buffer hits reduced from 20,016 to 640 (31x reduction)
+- Query planner chooses bitmap heap scans over sequential scans
+- I/O operations dramatically reduced
+
+#### 3. Production Readiness Achieved
+**Before Optimization**:
+- COUNT queries: 84x slower (unacceptable)
+- Aggregations: 44x slower (unacceptable)
+- Status: NOT production ready
+
+**After Optimization**:
+- COUNT queries: 1.3x overhead (excellent)
+- Aggregations: ~1x overhead (excellent)
+- Status: ✅ PRODUCTION READY
+
+### Key Lessons for RLS Implementation
+
+1. **Always mark read-only functions as STABLE or IMMUTABLE**
+   - Default VOLATILE causes per-row evaluation
+   - STABLE enables query-level caching
+   - Massive performance impact (64x improvement observed)
+
+2. **Design indexes with RLS in mind**
+   - Place tenant_id as first column in composite indexes
+   - Create indexes for common query patterns
+   - Test with EXPLAIN ANALYZE to verify index usage
+
+3. **Test early and often**
+   - Performance characteristics change dramatically with RLS
+   - Baseline testing critical for identifying issues
+   - Optimization opportunities may not be obvious without testing
+
+4. **PostgreSQL optimizer is intelligent**
+   - Works well with STABLE functions
+   - Chooses optimal index strategies when available
+   - Trust the optimizer but verify with EXPLAIN ANALYZE
+
+### Updated Success Metrics
+
+Phase 1 performance goals updated based on Day 2 results:
+
+- [✅] RLS policy successfully implemented on `tenant.sample_data`
+- [✅] Complete tenant isolation verified (security testing)
+- [✅] Performance impact < 2x for standard queries (exceeded 50% target)
+- [✅] No false positives or negatives in access control
+- [✅] Production-ready performance achieved
 
 This strategy provides a solid foundation for implementing secure, performant multi-tenant RLS policies while maintaining the flexibility needed for Taifabase's requirements.

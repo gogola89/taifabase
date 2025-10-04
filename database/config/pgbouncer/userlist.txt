@@ -1,0 +1,14 @@
+; PgBouncer User Authentication List
+; Format: "username" "password"
+; Password format: md5<md5 hash of password+username>
+; Example: For password "mypassword" and username "myuser", the hash is: md5<md5(mypasswordmyuser)>
+;
+; IMPORTANT: This file contains sensitive credentials
+; In production, use Docker secrets or external authentication methods
+; Never commit actual production passwords to version control
+
+; Development user credentials
+; Username: taifabase_user
+; Password: taifabase_dev_password
+; MD5 hash calculated as: md5(taifabase_dev_passwordtaifabase_user)
+"taifabase_user" "md553118eb134a4b02d4c1f87f008aff9e5"

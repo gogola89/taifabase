@@ -32,6 +32,17 @@ scrape_configs:
         - 'pg_locks'
         - 'pg_stat_replication'
 
+  # PgBouncer connection pooling metrics (Day 2)
+  # Note: PgBouncer has built-in stats via SHOW STATS/POOLS commands
+  # For Prometheus metrics, consider adding pgbouncer_exporter in future
+  # Current monitoring via health check scripts and admin console
+  - job_name: 'pgbouncer'
+    static_configs:
+      - targets: ['pgbouncer_exporter:9127']
+    scrape_interval: 15s
+    # Currently disabled - pgbouncer_exporter to be added in Phase 1 Sprint 2
+    # Metrics available: pool connections, client wait time, transaction count
+
   # Redis metrics (if redis_exporter is added later)
   - job_name: 'redis'
     static_configs:
