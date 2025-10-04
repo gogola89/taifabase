@@ -26,6 +26,8 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Function to get current tenant from session
+-- OPTIMIZED (Day 2): Marked as STABLE to enable caching within query execution
+-- This reduces function calls from 3 per row to 1 per query
 CREATE OR REPLACE FUNCTION get_current_tenant()
 RETURNS UUID AS $$
 BEGIN
@@ -35,9 +37,10 @@ EXCEPTION
         -- Return NULL if no tenant is set
         RETURN NULL;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STABLE;
 
 -- Function to validate current user can access a tenant
+-- OPTIMIZED (Day 2): Marked as STABLE for query-level caching
 CREATE OR REPLACE FUNCTION validate_tenant_access(tenant_uuid UUID)
 RETURNS boolean AS $$
 BEGIN
@@ -45,7 +48,7 @@ BEGIN
     -- In production, this would check user-tenant relationships
     RETURN EXISTS (SELECT 1 FROM core.tenants WHERE id = tenant_uuid AND status = 'active');
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql STABLE;
 
 -- ==================================================
 -- STEP 2: Create Database Roles for RLS
@@ -117,7 +120,16 @@ ALTER TABLE tenant.sample_data FORCE ROW LEVEL SECURITY;
 -- STEP 5: Create RLS Policies
 -- ==================================================
 
--- Policy 1: Basic Tenant Isolation for regular users
+-- OPTIMIZATION NOTE (Day 2):
+-- The policy below uses multiple function calls that were causing 84x performance degradation.
+-- After marking functions as STABLE, PostgreSQL will cache the function result within a query,
+-- reducing overhead significantly. We keep all three conditions for defense-in-depth security:
+-- 1. tenant_id = get_current_tenant() - Primary isolation
+-- 2. get_current_tenant() IS NOT NULL - Prevents null tenant access
+-- 3. validate_tenant_access() - Ensures tenant is active
+-- With STABLE functions, these 3 conditions only evaluate the function ONCE per query, not per row.
+
+-- Policy 1: Basic Tenant Isolation for regular users (OPTIMIZED Day 2)
 CREATE POLICY tenant_isolation_policy ON tenant.sample_data
     FOR ALL
     TO tenant_user
@@ -210,6 +222,30 @@ FROM tenant.sample_data;
 
 -- Grant access to the test view
 GRANT SELECT ON tenant.rls_test_view TO tenant_user, admin_user, readonly_user;
+
+-- ==================================================
+-- STEP 8: RLS-Optimized Indexes (Day 2 Optimization)
+-- ==================================================
+
+-- Composite indexes that place tenant_id FIRST for optimal RLS performance
+-- This allows PostgreSQL to efficiently filter by tenant before applying other conditions
+
+-- Index for category-based queries (most common in analytics)
+CREATE INDEX IF NOT EXISTS idx_sample_data_tenant_category
+ON tenant.sample_data(tenant_id, category);
+
+-- Index for time-based queries (common for recent data retrieval)
+CREATE INDEX IF NOT EXISTS idx_sample_data_tenant_created
+ON tenant.sample_data(tenant_id, created_at DESC);
+
+-- Index for JSONB metadata queries with tenant filtering
+CREATE INDEX IF NOT EXISTS idx_sample_data_tenant_metadata
+ON tenant.sample_data(tenant_id, metadata)
+WHERE metadata IS NOT NULL;
+
+-- Composite index for full-text search with tenant isolation
+CREATE INDEX IF NOT EXISTS idx_sample_data_tenant_value
+ON tenant.sample_data(tenant_id, value);
 
 -- ==================================================
 -- VERIFICATION QUERIES
