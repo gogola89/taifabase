@@ -1,0 +1,339 @@
+# Prometheus Alerting Rules for Taifabase Database Monitoring
+# Created: 2025-10-05
+# Purpose: Production-ready alerts for database, PgBouncer, and security monitoring
+
+groups:
+  # ============================================================================
+  # DATABASE PERFORMANCE & CAPACITY ALERTS
+  # ============================================================================
+  - name: database_performance
+    interval: 30s
+    rules:
+      # High connection usage - warning threshold
+      - alert: HighDatabaseConnections
+        expr: pg_stat_database_numbackends{datname="taifabase"} > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: postgresql
+          category: capacity
+        annotations:
+          summary: "High number of database connections"
+          description: "Database has {{ $value }} active connections (threshold: 80). Consider scaling or investigating connection leaks."
+          runbook: "Check application connection pooling, review long-running queries, verify PgBouncer configuration."
+
+      # Critical connection usage - near limit
+      - alert: CriticalDatabaseConnections
+        expr: pg_stat_database_numbackends{datname="taifabase"} > 95
+        for: 2m
+        labels:
+          severity: critical
+          component: postgresql
+          category: capacity
+        annotations:
+          summary: "Database connections near maximum capacity"
+          description: "Database has {{ $value }} active connections (max: 100). Immediate action required to prevent connection exhaustion."
+          runbook: "Immediately review and kill idle connections, scale database, or increase max_connections."
+
+      # Slow query rate increasing
+      - alert: HighSlowQueryRate
+        expr: rate(pg_stat_statements_calls{mean_exec_time > 100}[5m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "High rate of slow queries detected"
+          description: "{{ $value }} queries/sec are taking >100ms. Performance degradation detected."
+          runbook: "Review pg_stat_statements for slow queries, check for missing indexes, analyze query plans."
+
+      # Database deadlocks
+      - alert: DatabaseDeadlocks
+        expr: increase(pg_stat_database_deadlocks{datname="taifabase"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "Database deadlocks detected"
+          description: "{{ $value }} deadlocks occurred in the last 5 minutes."
+          runbook: "Review application transaction logic, check for lock contention, analyze deadlock logs."
+
+      # Transaction rollback rate
+      - alert: HighTransactionRollbackRate
+        expr: (rate(pg_stat_database_xact_rollback{datname="taifabase"}[5m]) / rate(pg_stat_database_xact_commit{datname="taifabase"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "High transaction rollback rate"
+          description: "{{ $value | humanizePercentage }} of transactions are being rolled back."
+          runbook: "Investigate application errors, check for constraint violations, review transaction logic."
+
+  # ============================================================================
+  # PGBOUNCER CONNECTION POOLING ALERTS
+  # ============================================================================
+  - name: pgbouncer_alerts
+    interval: 30s
+    rules:
+      # PgBouncer pool saturation - warning
+      - alert: PgBouncerPoolHighUtilization
+        expr: (pgbouncer_pools_server_active / pgbouncer_pools_server_total) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          component: pgbouncer
+          category: capacity
+        annotations:
+          summary: "PgBouncer pool utilization high"
+          description: "Pool utilization at {{ $value | humanizePercentage }}. May need to increase pool size."
+          runbook: "Review default_pool_size and max_db_connections in pgbouncer.ini, check for connection leaks."
+
+      # PgBouncer pool saturation - critical
+      - alert: PgBouncerPoolSaturated
+        expr: (pgbouncer_pools_server_active / pgbouncer_pools_server_total) > 0.9
+        for: 2m
+        labels:
+          severity: critical
+          component: pgbouncer
+          category: capacity
+        annotations:
+          summary: "PgBouncer pool near capacity"
+          description: "Pool utilization at {{ $value | humanizePercentage }}. Connection queuing likely occurring."
+          runbook: "Immediately increase default_pool_size, review query performance, consider scaling database."
+
+      # High client wait time
+      - alert: PgBouncerHighClientWaitTime
+        expr: pgbouncer_stats_avg_wait_time > 5000
+        for: 3m
+        labels:
+          severity: warning
+          component: pgbouncer
+          category: performance
+        annotations:
+          summary: "PgBouncer client wait time elevated"
+          description: "Average client wait time is {{ $value }}µs (>5ms). Pool may be saturated."
+          runbook: "Increase pool size, optimize slow queries, check server connection availability."
+
+      # Clients waiting in queue
+      - alert: PgBouncerClientsWaiting
+        expr: pgbouncer_pools_client_waiting > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: pgbouncer
+          category: capacity
+        annotations:
+          summary: "Clients waiting for PgBouncer connections"
+          description: "{{ $value }} clients are waiting for server connections."
+          runbook: "Increase pool size, check for slow queries blocking connections, review pool mode configuration."
+
+      # PgBouncer connection errors
+      - alert: PgBouncerConnectionErrors
+        expr: increase(pgbouncer_errors_total[5m]) > 5
+        for: 1m
+        labels:
+          severity: critical
+          component: pgbouncer
+          category: availability
+        annotations:
+          summary: "PgBouncer connection errors detected"
+          description: "{{ $value }} connection errors in the last 5 minutes."
+          runbook: "Check PostgreSQL availability, review authentication configuration, check network connectivity."
+
+  # ============================================================================
+  # RLS PERFORMANCE ALERTS
+  # ============================================================================
+  - name: rls_performance
+    interval: 30s
+    rules:
+      # RLS performance degradation
+      - alert: RLSPerformanceDegraded
+        expr: rate(pg_stat_user_tables_idx_scan{relname=~"products|orders|customers"}[5m]) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "RLS query performance degraded"
+          description: "Index scan rate dropped below threshold. RLS policies may be performing poorly."
+          runbook: "Review RLS policy efficiency, check for missing indexes, analyze query plans with EXPLAIN."
+
+      # RLS overhead exceeding target
+      - alert: RLSOverheadHigh
+        expr: (avg(pg_stat_user_tables_idx_scan{relname="products"}) / avg(pg_stat_user_tables_seq_scan{relname="products"})) > 2.0
+        for: 15m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "RLS overhead exceeding target"
+          description: "RLS overhead factor is {{ $value }}x (target: 1.3x). Performance optimization needed."
+          runbook: "Review RLS policy design, optimize indexes, consider policy simplification. Day 2 achieved 1.3x overhead."
+
+  # ============================================================================
+  # SECURITY ALERTS
+  # ============================================================================
+  - name: security_alerts
+    interval: 30s
+    rules:
+      # Unencrypted connections detected
+      - alert: UnencryptedConnections
+        expr: sum(pg_stat_ssl{ssl="off"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: postgresql
+          category: security
+        annotations:
+          summary: "Unencrypted database connections detected"
+          description: "{{ $value }} connections are not using SSL/TLS encryption."
+          runbook: "Enforce SSL in postgresql.conf (ssl_require), check client connection strings, review firewall rules."
+
+      # Failed authentication attempts spike
+      - alert: FailedAuthenticationSpike
+        expr: increase(pg_stat_database_conflicts{datname="taifabase"}[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: postgresql
+          category: security
+        annotations:
+          summary: "Failed authentication attempts spike"
+          description: "{{ $value }} failed authentication attempts in 5 minutes. Possible brute force attack."
+          runbook: "Review authentication logs, check for suspicious IPs, consider rate limiting, verify password policies."
+
+      # Unusual data access pattern
+      - alert: UnusualDataAccessPattern
+        expr: rate(pg_stat_database_temp_files{datname="taifabase"}[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: postgresql
+          category: security
+        annotations:
+          summary: "Unusual data access pattern detected"
+          description: "High rate of temporary file creation ({{ $value }}/sec). Potential data exfiltration or query anomaly."
+          runbook: "Review active queries, check for full table scans, investigate user activity in audit logs."
+
+  # ============================================================================
+  # RESOURCE UTILIZATION ALERTS
+  # ============================================================================
+  - name: resource_alerts
+    interval: 30s
+    rules:
+      # Low disk space warning
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/data"}) < 0.2
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+          category: capacity
+        annotations:
+          summary: "Low disk space on database volume"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining."
+          runbook: "Clean up old WAL files, review backup retention, consider expanding volume."
+
+      # Critical disk space
+      - alert: CriticalDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/data"}) < 0.1
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+          category: capacity
+        annotations:
+          summary: "Critical disk space on database volume"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining. Immediate action required."
+          runbook: "Immediately expand volume, clean up WAL files, archive old backups, disable non-essential writes."
+
+      # High CPU usage
+      - alert: HighDatabaseCPU
+        expr: rate(container_cpu_usage_seconds_total{name="postgres"}[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "High CPU usage on database"
+          description: "Database CPU usage at {{ $value }}%."
+          runbook: "Review slow queries, check for inefficient queries, consider query optimization or scaling."
+
+      # High memory usage
+      - alert: HighDatabaseMemory
+        expr: (container_memory_usage_bytes{name="postgres"} / container_spec_memory_limit_bytes{name="postgres"}) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "High memory usage on database"
+          description: "Database memory usage at {{ $value | humanizePercentage }}."
+          runbook: "Review shared_buffers and work_mem settings, check for memory leaks, optimize queries."
+
+      # Cache hit ratio low
+      - alert: LowCacheHitRatio
+        expr: (rate(pg_stat_database_blks_hit{datname="taifabase"}[5m]) / (rate(pg_stat_database_blks_hit{datname="taifabase"}[5m]) + rate(pg_stat_database_blks_read{datname="taifabase"}[5m]))) < 0.9
+        for: 10m
+        labels:
+          severity: warning
+          component: postgresql
+          category: performance
+        annotations:
+          summary: "Low cache hit ratio"
+          description: "Cache hit ratio is {{ $value | humanizePercentage }} (target: >90%). Performance may be degraded."
+          runbook: "Increase shared_buffers, optimize queries to be more cache-friendly, review working set size."
+
+  # ============================================================================
+  # AVAILABILITY ALERTS
+  # ============================================================================
+  - name: availability_alerts
+    interval: 30s
+    rules:
+      # Database down
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: postgresql
+          category: availability
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL exporter cannot reach the database."
+          runbook: "Check PostgreSQL service status, review logs, verify network connectivity, initiate failover if necessary."
+
+      # PgBouncer down
+      - alert: PgBouncerDown
+        expr: up{job="pgbouncer"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: pgbouncer
+          category: availability
+        annotations:
+          summary: "PgBouncer is down"
+          description: "PgBouncer exporter cannot reach the service."
+          runbook: "Check PgBouncer service status, review logs, verify PostgreSQL connectivity, restart if necessary."
+
+      # Replication lag (for future use with replicas)
+      - alert: ReplicationLag
+        expr: pg_replication_lag > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: postgresql
+          category: availability
+        annotations:
+          summary: "Replication lag detected"
+          description: "Replica is {{ $value }} seconds behind primary."
+          runbook: "Check network latency, review replication configuration, investigate primary load."
