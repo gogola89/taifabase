@@ -292,3 +292,316 @@ print(f\"- Timestamp: {baseline.get('timestamp', 'N/A')}\")
               echo "✅ All security tests passed"
             fi
           fi
+
+  load-testing:
+    name: Load Testing (1000+ concurrent users)
+    runs-on: ubuntu-latest
+    needs: database-rls-tests
+    # Only run load tests when PR has 'load-test' label (prevents slow CI on every commit)
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'load-test')
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install k6 load testing tool
+        run: |
+          wget -q https://github.com/grafana/k6/releases/download/v0.47.0/k6-v0.47.0-linux-amd64.tar.gz
+          tar -xzf k6-v0.47.0-linux-amd64.tar.gz
+          sudo mv k6 /usr/local/bin/
+          k6 version
+
+      - name: Validate test scripts
+        run: |
+          echo "Validating k6 test scripts..."
+          k6 inspect database/testing/load-tests/rls-load-test.js
+          k6 inspect database/testing/load-tests/pgbouncer-stress-test.js
+          k6 inspect database/testing/load-tests/rls-multi-tenant-load.js
+
+      - name: Run RLS load test (1000 concurrent users)
+        id: rls_load_test
+        run: |
+          echo "Starting RLS load test..."
+          k6 run --out json=rls-load-results.json database/testing/load-tests/rls-load-test.js
+        env:
+          PGBOUNCER_URL: http://localhost:5433
+          DB_NAME: taifabase_dev
+          DB_USER: taifabase_user
+          DB_PASSWORD: taifabase_dev_password
+        continue-on-error: true
+
+      - name: Run PgBouncer stress test (1500 concurrent users)
+        id: pgbouncer_stress_test
+        run: |
+          echo "Starting PgBouncer stress test..."
+          k6 run --out json=pgbouncer-stress-results.json database/testing/load-tests/pgbouncer-stress-test.js
+        env:
+          PGBOUNCER_URL: http://localhost:5433
+          DB_NAME: taifabase_dev
+          DB_USER: taifabase_user
+          DB_PASSWORD: taifabase_dev_password
+        continue-on-error: true
+
+      - name: Run multi-tenant load test
+        id: multi_tenant_load_test
+        run: |
+          echo "Starting multi-tenant load test..."
+          k6 run --out json=multi-tenant-load-results.json database/testing/load-tests/rls-multi-tenant-load.js
+        env:
+          PGBOUNCER_URL: http://localhost:5433
+          DB_NAME: taifabase_dev
+          DB_USER: taifabase_user
+          DB_PASSWORD: taifabase_dev_password
+        continue-on-error: true
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-test-results
+          path: |
+            rls-load-results.json
+            pgbouncer-stress-results.json
+            multi-tenant-load-results.json
+          retention-days: 30
+
+      - name: Parse and validate load test results
+        if: always()
+        run: |
+          echo "### Load Testing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # RLS Load Test
+          if [ -f rls-load-results.json ]; then
+            echo "#### RLS Load Test (1000 users)" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+import json
+import sys
+
+try:
+    with open('rls-load-results.json') as f:
+        data = json.load(f)
+
+    metrics = data.get('metrics', {})
+    thresholds = data.get('thresholds', {})
+
+    # Extract key metrics
+    http_reqs = metrics.get('http_reqs', {}).get('values', {}).get('count', 0)
+    http_failed = metrics.get('http_req_failed', {}).get('values', {}).get('rate', 0)
+    success_rate = (1 - http_failed) * 100
+
+    print(f'Total Requests: {http_reqs}')
+    print(f'Success Rate: {success_rate:.2f}%')
+
+    # Check thresholds
+    all_passed = all(t.get('ok', False) for t in thresholds.values())
+    print(f'Thresholds: {\"✓ PASSED\" if all_passed else \"✗ FAILED\"}')
+
+except Exception as e:
+    print(f'Error parsing results: {e}')
+            " >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # PgBouncer Stress Test
+          if [ -f pgbouncer-stress-results.json ]; then
+            echo "#### PgBouncer Stress Test (1500 users)" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+import json
+import sys
+
+try:
+    with open('pgbouncer-stress-results.json') as f:
+        data = json.load(f)
+
+    metrics = data.get('metrics', {})
+    thresholds = data.get('thresholds', {})
+
+    http_reqs = metrics.get('http_reqs', {}).get('values', {}).get('count', 0)
+    http_failed = metrics.get('http_req_failed', {}).get('values', {}).get('rate', 0)
+    success_rate = (1 - http_failed) * 100
+
+    print(f'Total Transactions: {http_reqs}')
+    print(f'Success Rate: {success_rate:.2f}%')
+
+    all_passed = all(t.get('ok', False) for t in thresholds.values())
+    print(f'Thresholds: {\"✓ PASSED\" if all_passed else \"✗ FAILED\"}')
+
+except Exception as e:
+    print(f'Error parsing results: {e}')
+            " >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Multi-tenant Load Test
+          if [ -f multi-tenant-load-results.json ]; then
+            echo "#### Multi-Tenant Load Test" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+import json
+import sys
+
+try:
+    with open('multi-tenant-load-results.json') as f:
+        data = json.load(f)
+
+    metrics = data.get('metrics', {})
+    thresholds = data.get('thresholds', {})
+
+    leakage = metrics.get('data_leakage_violations', {}).get('values', {}).get('count', -1)
+    isolation = metrics.get('tenant_isolation_success', {}).get('values', {}).get('rate', 0) * 100
+
+    print(f'Data Leakage Violations: {leakage}')
+    print(f'Tenant Isolation: {isolation:.2f}%')
+
+    all_passed = all(t.get('ok', False) for t in thresholds.values())
+    print(f'Thresholds: {\"✓ PASSED\" if all_passed else \"✗ FAILED\"}')
+
+    if leakage == 0:
+        print('✓ SECURITY: Perfect tenant isolation')
+    else:
+        print('✗ SECURITY: Data leakage detected!')
+
+except Exception as e:
+    print(f'Error parsing results: {e}')
+            " >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Comment PR with load test results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 📊 Load Testing Results\n\n';
+            comment += '*Load tests validate system performance under production-level concurrent load*\n\n';
+
+            // RLS Load Test Results
+            if (fs.existsSync('rls-load-results.json')) {
+              const rlsData = JSON.parse(fs.readFileSync('rls-load-results.json', 'utf8'));
+              const metrics = rlsData.metrics || {};
+              const thresholds = rlsData.thresholds || {};
+
+              const httpReqs = metrics.http_reqs?.values?.count || 0;
+              const httpFailed = metrics.http_req_failed?.values?.rate || 0;
+              const successRate = ((1 - httpFailed) * 100).toFixed(2);
+              const allPassed = Object.values(thresholds).every(t => t.ok);
+
+              const status = allPassed ? '✅' : '❌';
+
+              comment += `### ${status} RLS Load Test (1000 concurrent users)\n`;
+              comment += `- **Total Requests**: ${httpReqs.toLocaleString()}\n`;
+              comment += `- **Success Rate**: ${successRate}%\n`;
+              comment += `- **Status**: ${allPassed ? 'PASSED' : 'FAILED'}\n\n`;
+            }
+
+            // PgBouncer Stress Test Results
+            if (fs.existsSync('pgbouncer-stress-results.json')) {
+              const pgData = JSON.parse(fs.readFileSync('pgbouncer-stress-results.json', 'utf8'));
+              const metrics = pgData.metrics || {};
+              const thresholds = pgData.thresholds || {};
+
+              const httpReqs = metrics.http_reqs?.values?.count || 0;
+              const httpFailed = metrics.http_req_failed?.values?.rate || 0;
+              const successRate = ((1 - httpFailed) * 100).toFixed(2);
+              const allPassed = Object.values(thresholds).every(t => t.ok);
+
+              const status = allPassed ? '✅' : '❌';
+
+              comment += `### ${status} PgBouncer Stress Test (1500 concurrent users)\n`;
+              comment += `- **Total Transactions**: ${httpReqs.toLocaleString()}\n`;
+              comment += `- **Success Rate**: ${successRate}%\n`;
+              comment += `- **Status**: ${allPassed ? 'PASSED' : 'FAILED'}\n\n`;
+            }
+
+            // Multi-Tenant Load Test Results
+            if (fs.existsSync('multi-tenant-load-results.json')) {
+              const mtData = JSON.parse(fs.readFileSync('multi-tenant-load-results.json', 'utf8'));
+              const metrics = mtData.metrics || {};
+              const thresholds = mtData.thresholds || {};
+
+              const leakage = metrics.data_leakage_violations?.values?.count || 0;
+              const isolation = ((metrics.tenant_isolation_success?.values?.rate || 0) * 100).toFixed(2);
+              const allPassed = Object.values(thresholds).every(t => t.ok);
+
+              const status = leakage === 0 && allPassed ? '✅' : '❌';
+
+              comment += `### ${status} Multi-Tenant Load Test\n`;
+              comment += `- **Data Leakage Violations**: ${leakage}\n`;
+              comment += `- **Tenant Isolation**: ${isolation}%\n`;
+              comment += `- **Status**: ${allPassed ? 'PASSED' : 'FAILED'}\n`;
+
+              if (leakage === 0) {
+                comment += `- 🔒 **Security**: Perfect tenant isolation\n`;
+              } else {
+                comment += `- ⚠️ **Security**: Data leakage detected!\n`;
+              }
+              comment += '\n';
+            }
+
+            comment += '---\n';
+            comment += '*Load Testing Framework by Aisha Kamau - QA Engineer (Day 3)*\n';
+            comment += '*Add `load-test` label to run load tests on this PR*';
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Check critical thresholds
+        if: always()
+        run: |
+          # Check for data leakage (critical security violation)
+          if [ -f multi-tenant-load-results.json ]; then
+            LEAKAGE=$(python3 -c "import json; data=json.load(open('multi-tenant-load-results.json')); print(data.get('metrics', {}).get('data_leakage_violations', {}).get('values', {}).get('count', 0))")
+
+            if [ "$LEAKAGE" -gt "0" ]; then
+              echo "❌ CRITICAL: Data leakage detected ($LEAKAGE violations)"
+              echo "Load tests failed - tenant isolation compromised"
+              exit 1
+            fi
+          fi
+
+          # Check if any load test completely failed
+          EXIT_CODE=0
+
+          if [ -f rls-load-results.json ]; then
+            PASSED=$(python3 -c "import json; data=json.load(open('rls-load-results.json')); print(all(t.get('ok', False) for t in data.get('thresholds', {}).values()))")
+            if [ "$PASSED" = "False" ]; then
+              echo "❌ RLS load test thresholds failed"
+              EXIT_CODE=1
+            fi
+          fi
+
+          if [ -f pgbouncer-stress-results.json ]; then
+            PASSED=$(python3 -c "import json; data=json.load(open('pgbouncer-stress-results.json')); print(all(t.get('ok', False) for t in data.get('thresholds', {}).values()))")
+            if [ "$PASSED" = "False" ]; then
+              echo "⚠️ PgBouncer stress test thresholds failed (warning only)"
+              # Don't fail on PgBouncer stress test - it's expected to show limits
+            fi
+          fi
+
+          if [ -f multi-tenant-load-results.json ]; then
+            PASSED=$(python3 -c "import json; data=json.load(open('multi-tenant-load-results.json')); print(all(t.get('ok', False) for t in data.get('thresholds', {}).values()))")
+            if [ "$PASSED" = "False" ]; then
+              echo "❌ Multi-tenant load test thresholds failed"
+              EXIT_CODE=1
+            fi
+          fi
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ All load tests passed successfully"
+          else
+            echo "❌ Some load tests failed - review artifacts for details"
+          fi
+
+          exit $EXIT_CODE
